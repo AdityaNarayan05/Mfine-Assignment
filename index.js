@@ -1,151 +1,220 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
+const { v4: uuidv4 } = require('uuid');
 require('dotenv').config();
 
 const app = express();
 app.use(bodyParser.json());
+
 const mongoAtlasConnectionString = process.env.URL;
 
-// Connect to MongoDB Atlas
-mongoose.connect(mongoAtlasConnectionString).then(() => console.log('Connected to MongoDB Atlas'))
+mongoose.connect(mongoAtlasConnectionString)
+    .then(() => console.log('Connected to MongoDB Atlas'))
     .catch(err => console.error('Could not connect to MongoDB Atlas', err));
-;
 
-// Define the ParkingLot schema
 const parkingLotSchema = new mongoose.Schema({
-    slotNumber: Number,
-    registrationNumber: String,
-    color: String,
+    _id: String,
+    capacity: Number,
 });
 
-const ParkingLotModel = mongoose.model('ParkingLot', parkingLotSchema);
+const carSchema = new mongoose.Schema({
+    parkingLotId: String,
+    registrationNumber: String,
+    color: String,
+    slotNumber: Number,
+    status: String, // Add status field to the schema
+});
 
-// Function to generate a unique ID for the parking lot
-const generateParkingLotId = () => {
-    return uuidv4();
-};
+const ParkingLot = mongoose.model('ParkingLot', parkingLotSchema);
+const Car = mongoose.model('Car', carSchema);
 
-// API to create a new parking lot
 app.post('/api/parkingLots', async (req, res) => {
+    const { id, capacity } = req.body;
+    // if(!id){
+    //     return res.status(404).json({ error: 'invalid ID' });
+    //   }
+    //   if(!capacity){
+    //     return res.status(404).json({ error: 'invalid capacity' });
+    //   }
+    // Validate capacity
+    if (capacity < 0 || capacity > 2000 || !capacity) {
+        return res.status(400).json({ isSuccess: false, error: 'Capacity should be between 0 and 2000.' });
+    }
+
+    // Validate id
+    if (!/^[0-9a-fA-F]{24}$/.test(id)) {
+        return res.status(400).json({ isSuccess: false, error: 'Invalid id.' });
+    }
+
     try {
-        const { id, capacity } = req.body;
-        const existingParkingLot = await ParkingLotModel.findOne({ id });
-
-        if (existingParkingLot) {
-            return res.status(400).json({ isSuccess: false, error: 'Parking lot with this ID already exists.' });
-        }
-        const slots = Array.from({ length: capacity }, (_, index) => ({
-            slotNumber: index + 1,
-            registrationNumber: null,
-            color: null,
-        }));
-
-        await ParkingLotModel.insertMany(slots);
-
+        await ParkingLot.create({ _id: id, capacity });
         const response = {
             isSuccess: true,
             response: {
-                id,
-                capacity,
+                id: id,
+                capacity: capacity,
                 isActive: true,
             },
         };
-
         res.json(response);
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ isSuccess: false, error: 'Internal Server Error' });
+        res.status(500).json({ isSuccess: false, error: error.message });
     }
 });
-//api parking
+
 app.post('/api/Parking', async (req, res) => {
+    const { parkingLotId, registrationNumber, color, status } = req.body;
+
+    // Validate registrationNumber
+    if (!isValidRegistrationNumber(registrationNumber)) {
+        return res.status(400).json({ isSuccess: false, error: 'Invalid registration number format.' });
+    }
+
+    // Validate status
+    if (status !== 'PARKED' && status !== 'LEFT') {
+        return res.status(400).json({ isSuccess: false, error: 'Invalid status. It should be either PARKED or LEFT.' });
+    }
+
+    // Validate color
+    const allowedColors = ['RED', 'GREEN', 'BLUE', 'BLACK', 'WHITE', 'YELLOW', 'ORANGE'];
+    if (!allowedColors.includes(color)) {
+        return res.status(400).json({ isSuccess: false, error: 'Invalid color.' });
+    }
+
     try {
-        const { parkingLotId, registrationNumber, color } = req.body;
-        const parkingLot = await ParkingLotModel.find({});
+        const parkingLot = await ParkingLot.findById(parkingLotId);
         if (!parkingLot) {
             return res.status(404).json({ error: 'Parking lot not found.' });
         }
 
-        const availableSlot = parkingLot.find((car) => car.registrationNumber === null);
-        if (!availableSlot) {
+        const slotNumber = await Car.countDocuments({ parkingLotId }) + 1;
+        if (slotNumber > parkingLot.capacity) {
             return res.status(400).json({ isSuccess: false, error: 'Parking lot is full.' });
         }
 
-        availableSlot.registrationNumber = registrationNumber;
-        availableSlot.color = color;
-        await availableSlot.save();
+        await Car.create({ parkingLotId, registrationNumber, color, slotNumber, status });
         const response = {
             isSuccess: true,
             response: {
-                slotNumber: availableSlot.slotNumber,
+                slotNumber: slotNumber,
                 status: 'PARKED',
             },
         };
-
         res.json(response);
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ isSuccess: false, error: 'Internal Server Error' });
+        res.status(500).json({ isSuccess: false, error: error.message });
     }
 });
 
-
-// API to leave/unpark a car
 app.delete('/api/Parkings', async (req, res) => {
-    try {
-        const { parkingLotId, registrationNumber } = req.body;
-        const parkingLot = await ParkingLotModel.find({});
-        if (!parkingLot) {
-            return res.status(404).json({ isSuccess: false, error: 'Parking lot not found.' });
-        }
-        const targetSlot = parkingLot.find((car) => car && car.registrationNumber === registrationNumber);
+    const { parkingLotId, registrationNumber } = req.body;
 
-        if (!targetSlot) {
+    try {
+        const car = await Car.findOneAndDelete({ parkingLotId, registrationNumber });
+
+        if (!car) {
             return res.status(404).json({ isSuccess: false, error: 'Car not found in the parking lot.' });
         }
 
-        registrationNumbera = targetSlot.registrationNumber;
-        targetSlot.registrationNumber = null;
-        targetSlot.color = null;
-        await targetSlot.save();
         const response = {
             isSuccess: true,
             response: {
-                slotNumber: targetSlot.slotNumber,
-                registrationNumber: registrationNumbera,
+                slotNumber: car.slotNumber,
+                registrationNumber: car.registrationNumber,
                 status: 'LEFT',
+            },
+        };
+        res.json(response);
+    } catch (error) {
+        res.status(500).json({ isSuccess: false, error: error.message });
+    }
+});
+
+app.get('/api/Parkings', async (req, res) => {
+    const { color, parkingLotId } = req.query;
+
+    try {
+        const matchingCars = await Car.find({ parkingLotId, color });
+
+        if (matchingCars.length === 0) {
+            return res.status(400).json({ isSuccess: false, error: { reason: `No car found with color ${color}` } });
+        }
+
+        const registrations = matchingCars.map((car) => ({
+            color: car.color,
+            registrationNumber: car.registrationNumber,
+        }));
+
+        const response = {
+            isSuccess: true,
+            response: {
+                registrations: registrations,
             },
         };
 
         res.json(response);
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ isSuccess: false, error: 'Internal Server Error' });
+        res.status(500).json({ isSuccess: false, error: error.message });
     }
 });
 
-// API to get registration numbers of cars with a specific color
-app.get('/registration_numbers_for_cars_with_color', (req, res) => {
-    const { color: color } = req.query;
-    const matchingCars = parkingLot.filter((car) => car && car.color === color);
-    const registrationNumbers = matchingCars.map((car) => car.registration_number);
-    res.json({ registration_numbers: registrationNumbers });
-});
+app.get('/api/Slots', async (req, res) => {
+    const { color, parkingLotId } = req.query;
 
-// API to get slot numbers for cars with a specific color
-app.get('/slot_numbers_for_cars_with_color', (req, res) => {
-    const { color: color } = req.query;
-    const matchingSlots = parkingLot.reduce((acc, car, index) => {
-        if (car && car.color === color) {
-            acc.push(index + 1);
+    try {
+        const parkingLot = await ParkingLot.findById(parkingLotId);
+
+        if (!parkingLot) {
+            return res.status(404).json({ isSuccess: false, error: 'Parking lot not found.' });
         }
-        return acc;
-    }, []);
-    res.json({ slot_numbers: matchingSlots });
+
+        const matchingSlots = await Car.find({ parkingLotId, color })
+            .sort({ slotNumber: 1 })
+            .select('color slotNumber -_id');
+
+        if (matchingSlots.length === 0) {
+            return res.status(400).json({ isSuccess: false, error: { reason: 'Invalid Color' } });
+        }
+
+        const response = {
+            isSuccess: true,
+            response: {
+                slots: matchingSlots.map((slot) => ({
+                    color: slot.color,
+                    slotNumber: slot.slotNumber,
+                })),
+            },
+        };
+
+        res.json(response);
+    } catch (error) {
+        res.status(500).json({ isSuccess: false, error: error.message });
+    }
 });
 
-// Start the server
+function isValidRegistrationNumber(registrationNumber) {
+    if (typeof registrationNumber !== 'string') {
+        return false;
+    }
+
+    if (registrationNumber.length !== 9) {
+        return false;
+    }
+
+    const districtCode = registrationNumber.substring(0, 2);
+    const validDistrictCodes = ['DL', 'MH', 'KA', 'TN'];
+
+    if (!validDistrictCodes.includes(districtCode)) {
+        return false;
+    }
+
+    const remainingCharacters = registrationNumber.substring(2);
+    const validFormat = /^[A-Z0-9]+$/.test(remainingCharacters);
+
+    return validFormat;
+}
+
 const port = process.env.PORT || 5000;
 const server = app.listen(port, () =>
     console.log(`Server started on ${port}`)
