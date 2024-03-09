@@ -7,7 +7,7 @@ require('dotenv').config();
 const app = express();
 app.use(bodyParser.json());
 
-const mongoAtlasConnectionString = process.env.URL;
+const mongoAtlasConnectionString = process.env.MONGO_URI;
 
 mongoose.connect(mongoAtlasConnectionString)
     .then(() => console.log('Connected to MongoDB Atlas'))
@@ -28,6 +28,28 @@ const carSchema = new mongoose.Schema({
 
 const ParkingLot = mongoose.model('ParkingLot', parkingLotSchema);
 const Car = mongoose.model('Car', carSchema);
+
+function isValidRegistrationNumber(registrationNumber) {
+    if (typeof registrationNumber !== 'string') {
+        return false;
+    }
+
+    if (registrationNumber.length !== 9) {
+        return false;
+    }
+
+    const districtCode = registrationNumber.substring(0, 2);
+    const validDistrictCodes = ['DL', 'MH', 'KA', 'TN'];
+
+    if (!validDistrictCodes.includes(districtCode)) {
+        return false;
+    }
+
+    const remainingCharacters = registrationNumber.substring(2);
+    const validFormat = /^[A-Z0-9]+$/.test(remainingCharacters);
+
+    return validFormat;
+}
 
 app.post('/api/parkingLots', async (req, res) => {
     const { id, capacity } = req.body;
@@ -57,13 +79,14 @@ app.post('/api/parkingLots', async (req, res) => {
                 isActive: true,
             },
         };
+        console.log("Created a new parking lot", response);
         res.json(response);
     } catch (error) {
         res.status(500).json({ isSuccess: false, error: error.message });
     }
 });
 
-app.post('/api/Parking', async (req, res) => {
+app.post('/api/Parkings', async (req, res) => {
     const { parkingLotId, registrationNumber, color, status } = req.body;
 
     // Validate registrationNumber
@@ -72,9 +95,9 @@ app.post('/api/Parking', async (req, res) => {
     }
 
     // Validate status
-    if (status !== 'PARKED' && status !== 'LEFT') {
-        return res.status(400).json({ isSuccess: false, error: 'Invalid status. It should be either PARKED or LEFT.' });
-    }
+    // if (status !== 'PARKED' && status !== 'LEFT') {
+    //     return res.status(400).json({ isSuccess: false, error: 'Invalid status. It should be either PARKED or LEFT.' });
+    // }
 
     // Validate color
     const allowedColors = ['RED', 'GREEN', 'BLUE', 'BLACK', 'WHITE', 'YELLOW', 'ORANGE'];
@@ -101,6 +124,7 @@ app.post('/api/Parking', async (req, res) => {
                 status: 'PARKED',
             },
         };
+        console.log("Created car with slot number " + slotNumber);
         res.json(response);
     } catch (error) {
         res.status(500).json({ isSuccess: false, error: error.message });
@@ -125,6 +149,7 @@ app.delete('/api/Parkings', async (req, res) => {
                 status: 'LEFT',
             },
         };
+        console.log(`Deleted car ${car.registrationNumber} from the parking lot.`);
         res.json(response);
     } catch (error) {
         res.status(500).json({ isSuccess: false, error: error.message });
@@ -153,6 +178,7 @@ app.get('/api/Parkings', async (req, res) => {
             },
         };
 
+        console.log(registrations);
         res.json(response);
     } catch (error) {
         res.status(500).json({ isSuccess: false, error: error.message });
@@ -187,33 +213,12 @@ app.get('/api/Slots', async (req, res) => {
             },
         };
 
+        console.log(JSON.stringify(response));
         res.json(response);
     } catch (error) {
         res.status(500).json({ isSuccess: false, error: error.message });
     }
 });
-
-function isValidRegistrationNumber(registrationNumber) {
-    if (typeof registrationNumber !== 'string') {
-        return false;
-    }
-
-    if (registrationNumber.length !== 9) {
-        return false;
-    }
-
-    const districtCode = registrationNumber.substring(0, 2);
-    const validDistrictCodes = ['DL', 'MH', 'KA', 'TN'];
-
-    if (!validDistrictCodes.includes(districtCode)) {
-        return false;
-    }
-
-    const remainingCharacters = registrationNumber.substring(2);
-    const validFormat = /^[A-Z0-9]+$/.test(remainingCharacters);
-
-    return validFormat;
-}
 
 const port = process.env.PORT || 5000;
 const server = app.listen(port, () =>
